@@ -1,0 +1,159 @@
+
+<!DOCTYPE html>
+<html lang="ka">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>მაღაზიის სალარო</title>
+<style>
+body{font-family:Arial,sans-serif;background:#f2f4f7;margin:0;color:#222}
+header{background:#176b45;color:white;padding:18px;font-size:22px;font-weight:bold}
+main{padding:14px;max-width:650px;margin:auto}
+.card{background:white;padding:15px;margin-bottom:14px;border-radius:12px;box-shadow:0 2px 6px #ddd}
+h3{margin-top:0}
+input,button{box-sizing:border-box;width:100%;padding:12px;margin:5px 0;border-radius:8px;border:1px solid #ccc;font-size:16px}
+button{background:#176b45;color:white;border:0;font-weight:bold}
+.secondary{background:#555}
+.danger{background:#b3261e}
+.item{padding:10px 0;border-bottom:1px solid #ddd}
+.small{font-size:13px;color:#666}
+#video{width:100%;display:none;border-radius:10px}
+.total{font-size:23px;font-weight:bold;color:#176b45}
+</style>
+</head>
+<body>
+<header>🛒 ჩემი მაღაზიის სალარო</header>
+<main>
+<div class="card">
+<h3>საქონლის დამატება</h3>
+<input id="name" placeholder="საქონლის დასახელება">
+<input id="barcode" placeholder="შტრიხკოდი">
+<input id="price" type="number" min="0" step="0.01" placeholder="გასაყიდი ფასი (₾)">
+<input id="stock" type="number" min="0" step="1" placeholder="რაოდენობა საწყობში">
+<button onclick="addProduct()">საქონლის შენახვა</button>
+<button class="secondary" onclick="scanStart()">📷 კამერით შტრიხკოდის წაკითხვა</button>
+<video id="video" playsinline></video>
+<p id="scanmsg" class="small"></p>
+</div>
+
+<div class="card">
+<h3>გაყიდვა</h3>
+<input id="search" placeholder="შტრიხკოდი ან დასახელება">
+<button onclick="findProduct()">საქონლის მოძებნა</button>
+<div id="found"></div>
+<div id="cart"></div>
+<p class="total">სულ: <span id="sum">0.00</span> ₾</p>
+<button onclick="checkout()">გაყიდვის დასრულება</button>
+</div>
+
+<div class="card">
+<h3>საქონლის ნაშთები</h3>
+<div id="products"></div>
+</div>
+
+<div class="card">
+<h3>დღიური ანგარიში</h3>
+<p>დღის შემოსავალი: <b id="today">0.00</b> ₾</p>
+<p>გაყიდული ერთეულები: <b id="units">0</b></p>
+<p>გაყიდვების რაოდენობა: <b id="salescount">0</b></p>
+<button class="secondary" onclick="showHistory()">გაყიდვების ისტორია</button>
+<div id="history"></div>
+<button class="secondary" onclick="backup()">💾 სარეზერვო ასლის ჩამოტვირთვა</button>
+<button class="secondary" onclick="document.getElementById('restore').click()">სარეზერვო ასლის აღდგენა</button>
+<input id="restore" type="file" accept=".json" hidden onchange="restoreBackup(event)">
+</div>
+</main>
+<script>
+const load=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}};
+let products=load("shop_products",[]);
+let sales=load("shop_sales",[]);
+let cart=[];
+let stream=null;
+const $=id=>document.getElementById(id);
+const save=()=>{localStorage.setItem("shop_products",JSON.stringify(products));localStorage.setItem("shop_sales",JSON.stringify(sales));render()};
+function money(n){return Number(n).toFixed(2)}
+function addProduct(){
+ let name=$("name").value.trim(),barcode=$("barcode").value.trim();
+ let price=Number($("price").value),stock=Number($("stock").value);
+ if(!name||!barcode||$("price").value===""||$("stock").value===""||price<0||stock<0)return alert("შეავსე ყველა ველი სწორად");
+ if(products.some(p=>p.barcode===barcode))return alert("ეს შტრიხკოდი უკვე არსებობს");
+ products.push({id:Date.now(),name,barcode,price,stock});
+ $("name").value=$("barcode").value=$("price").value=$("stock").value="";
+ save();alert("საქონელი შენახულია");
+}
+function findProduct(){
+ let q=$("search").value.trim().toLowerCase();
+ let p=products.find(x=>x.barcode===q||x.name.toLowerCase().includes(q));
+ if(!p)return $("found").innerHTML="საქონელი ვერ მოიძებნა";
+ $("found").innerHTML=`<div class="item"><b>${esc(p.name)}</b><br>${money(p.price)} ₾ · ნაშთი: ${p.stock}<input id="qty" type="number" min="1" max="${p.stock}" value="1"><button onclick="addCart(${p.id})">ჩეკში დამატება</button></div>`;
+}
+function addCart(id){
+ let p=products.find(x=>x.id===id),q=Number($("qty").value);
+ if(!p||!Number.isInteger(q)||q<1||q>p.stock)return alert("რაოდენობა არასწორია");
+ let c=cart.find(x=>x.id===id);
+ if((c?c.qty:0)+q>p.stock)return alert("საწყობში საკმარისი რაოდენობა არ არის");
+ if(c)c.qty+=q;else cart.push({id,qty:q});
+ $("search").value="";$("found").innerHTML="";render();
+}
+function checkout(){
+ if(!cart.length)return alert("ჩეკი ცარიელია");
+ let total=0,units=0,items=[];
+ for(let c of cart){
+  let p=products.find(x=>x.id===c.id);
+  if(!p||p.stock<c.qty)return alert("ნაშთი შეიცვალა. გადაამოწმე საქონელი");
+  total+=p.price*c.qty;units+=c.qty;
+  items.push({name:p.name,barcode:p.barcode,price:p.price,qty:c.qty});
+ }
+ for(let c of cart)products.find(p=>p.id===c.id).stock-=c.qty;
+ sales.push({date:new Date().toISOString(),total,units,items});
+ cart=[];save();alert("გაყიდვა დასრულდა. თანხა: "+money(total)+" ₾");
+}
+function render(){
+ $("products").innerHTML=products.map(p=>`<div class="item"><b>${esc(p.name)}</b><br><span class="small">${esc(p.barcode)}</span><br>${money(p.price)} ₾ · ნაშთი: ${p.stock}<button class="secondary" onclick="editProduct(${p.id})">ფასის/ნაშთის შეცვლა</button><button class="danger" onclick="deleteProduct(${p.id})">წაშლა</button></div>`).join("")||"საქონელი ჯერ არ არის";
+ $("cart").innerHTML=cart.map(c=>{let p=products.find(x=>x.id===c.id);return p?`<div class="item">${esc(p.name)} × ${c.qty} = ${money(p.price*c.qty)} ₾ <button class="danger" onclick="removeCart(${c.id})">ამოღება</button></div>`:""}).join("");
+ $("sum").textContent=money(cart.reduce((s,c)=>s+(products.find(p=>p.id===c.id)?.price||0)*c.qty,0));
+ let day=new Date().toDateString(),ss=sales.filter(s=>new Date(s.date).toDateString()===day);
+ $("today").textContent=money(ss.reduce((a,s)=>a+s.total,0));
+ $("units").textContent=ss.reduce((a,s)=>a+s.units,0);
+ $("salescount").textContent=ss.length;
+}
+function editProduct(id){
+ let p=products.find(x=>x.id===id);if(!p)return;
+ let price=prompt("ახალი გასაყიდი ფასი:",p.price);if(price===null)return;
+ let stock=prompt("ახალი ნაშთი:",p.stock);if(stock===null)return;
+ if(price.trim()===""||stock.trim()===""||!Number.isFinite(Number(price))||Number(price)<0||!Number.isInteger(Number(stock))||Number(stock)<0)return alert("მონაცემები არასწორია");
+ p.price=Number(price);p.stock=Number(stock);save();
+}
+function deleteProduct(id){if(confirm("წავშალოთ საქონელი?")){products=products.filter(p=>p.id!==id);cart=cart.filter(c=>c.id!==id);save()}}
+function removeCart(id){cart=cart.filter(c=>c.id!==id);render()}
+function showHistory(){
+ $("history").innerHTML=sales.slice().reverse().map(s=>`<div class="item">${new Date(s.date).toLocaleString("ka-GE")}<br><b>${money(s.total)} ₾</b> · ${s.units} ერთეული<br>${s.items.map(i=>esc(i.name)+" × "+i.qty).join(", ")}</div>`).join("")||"გაყიდვები ჯერ არ არის";
+}
+function backup(){
+ let data=JSON.stringify({products,sales},null,2),a=document.createElement("a");
+ a.href=URL.createObjectURL(new Blob([data],{type:"application/json"}));a.download="magaziis-backup.json";a.click();URL.revokeObjectURL(a.href);
+}
+function restoreBackup(e){
+ let f=e.target.files[0];if(!f)return;
+ let r=new FileReader();r.onload=()=>{try{let d=JSON.parse(r.result);if(!Array.isArray(d.products)||!Array.isArray(d.sales))throw Error();if(!confirm("მიმდინარე მონაცემები ჩანაცვლდება. გავაგრძელოთ?"))return;products=d.products;sales=d.sales;cart=[];save();alert("მონაცემები აღდგენილია")}catch{alert("ფაილი არასწორია")}};r.readAsText(f);e.target.value="";
+}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+async function scanStart(){
+ if(!("BarcodeDetector" in window)){alert("ამ Chrome-ში შტრიხკოდის სკანირება არ არის მხარდაჭერილი. მოგვიანებით დავამატებთ თავსებად სკანერს.");return}
+ try{
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+  $("video").srcObject=stream;$("video").style.display="block";await $("video").play();
+  let detector=new BarcodeDetector({formats:["ean_13","ean_8","upc_a","upc_e","code_128","code_39","itf"]});
+  $("scanmsg").textContent="მიუშვირე კამერა შტრიხკოდს";
+  const scan=async()=>{
+   if(!stream)return;
+   try{let codes=await detector.detect($("video"));if(codes.length){$("search").value=codes[0].rawValue;scanStop();findProduct();return}}catch(e){}
+   if(stream)requestAnimationFrame(scan);
+  };scan();
+ }catch(e){alert("კამერა ვერ ჩაირთო. დაუშვი კამერაზე წვდომა და გახსენი HTTPS ბმულიდან.")}
+}
+function scanStop(){if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;$("video").style.display="none";$("scanmsg").textContent=""}
+render();
+</script>
+</body>
+</html>
